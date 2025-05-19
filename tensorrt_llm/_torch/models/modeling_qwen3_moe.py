@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import torch
 from torch import nn
@@ -9,10 +9,10 @@ from transformers import Qwen3MoeConfig
 from ..attention_backend import AttentionMetadata
 from ..distributed import AllReduce, AllReduceFusionOp, AllReduceParams
 from ..model_config import ModelConfig
-from ..models.modeling_utils import MissingLayer
+from ..models.modeling_utils import (MissingLayer, rename_weights_with_regex)
 from ..modules.decoder_layer import DecoderLayer
 from ..modules.embedding import Embedding
-from ..modules.fused_moe import FusedMoE, RenormalizeMoeRoutingMethod
+from ..modules.fused_moe import FusedMoE, RenormalizeMoeRoutingMethod, Llama4RenormalizeMoeRoutingMethod
 from ..modules.linear import Linear, TensorParallelMode
 from ..modules.rms_norm import RMSNorm
 from .modeling_qwen3 import Qwen3Attention
@@ -21,12 +21,50 @@ from .modeling_utils import (DecoderModel, DecoderModelForCausalLM,
                              register_auto_model)
 
 
+class Qwen3Gate(RenormalizeMoeRoutingMethod):
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        top_k: int,
+        dtype: Optional[torch.dtype] = None,
+        apply_routing: bool = False,
+        moe_backend: str = "CUTLASS",
+    ):
+        super().__init__(top_k=top_k)
+
+        self.weight = nn.Parameter(
+            torch.empty((num_experts, hidden_size), dtype=dtype), requires_grad=False
+        )
+        self.moe_backend = moe_backend
+        self.out_dtype = out_dtype = torch.float32 if moe_backend == "TRTLLM" else dtype
+
+        assert not apply_routing, "Qwen3Gate routing is called inside MoE"
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        logits: torch.Tensor = torch.ops.trtllm.cublas_mm(
+            hidden_states, self.weight.t(), bias=None, out_dtype=self.out_dtype
+        )
+        return logits
+
+    def load_weights(self, weights: List[Dict]):
+        assert len(weights) == 1
+
+        self.weight.copy_(weights[0]["weight"][:])
+
+    @property
+    def routing_method(self) -> RenormalizeMoeRoutingMethod:
+        return self
+
+
 class Qwen3MoE(nn.Module):
 
     def __init__(
         self,
         model_config: ModelConfig[Qwen3MoeConfig],
         aux_stream: torch.cuda.Stream,
+        layer_idx: int, # NOTE ANT: for debugging
     ):
         super().__init__()
         config = model_config.pretrained_config
@@ -40,23 +78,48 @@ class Qwen3MoE(nn.Module):
         self.mapping = model_config.mapping
         self.allreduce = AllReduce(self.mapping)
 
-        # moe gate (linear layer) only runs in half/full precision for now
-        self.gate = Linear(self.hidden_dim,
-                           self.num_experts,
-                           bias=False,
-                           dtype=config.torch_dtype,
-                           quant_config=None)
-
-        self.experts = FusedMoE(
-            num_experts=self.num_experts,
-            routing_method=RenormalizeMoeRoutingMethod(top_k=self.top_k),
+        # MoE gate (linear layer). Wrap with a class to control output dtype.
+        # moe_backend="CUTLASS" outputs the same dtype as input
+        # moe_backend="TRTLLM" outputs higher precision torch.float32
+        self.gate = Qwen3Gate(
             hidden_size=self.hidden_dim,
-            intermediate_size=self.moe_intermediate_size,
-            aux_stream=aux_stream,
+            num_experts=self.num_experts,
+            top_k=self.top_k,
             dtype=config.torch_dtype,
-            reduce_results=False,
-            model_config=model_config,
+            apply_routing=False,
+            moe_backend=model_config.moe_backend,
         )
+
+        # NOTE ANT: debug: replace just single layer with TRTLLM backend for dev velocity
+        if layer_idx == -1:
+            # import debugpy; debugpy.listen(("127.0.0.1", 12345)); debugpy.wait_for_client()
+            # NOTE ANT: debug: copy model_config and change moe_backend to TRTLLM
+            import copy
+            model_config_copy = copy.deepcopy(x=model_config)
+            model_config_copy.moe_backend = "TRTLLM"
+            model_config_copy.quant_config = model_config.quant_config # does deepcopy not copy this?
+            self.experts = FusedMoE(
+                num_experts=self.num_experts,
+                routing_method=RenormalizeMoeRoutingMethod(top_k=self.top_k),
+                hidden_size=self.hidden_dim,
+                intermediate_size=self.moe_intermediate_size,
+                aux_stream=aux_stream,
+                dtype=config.torch_dtype,
+                reduce_results=False,
+                model_config=model_config_copy,
+            )
+
+        else:
+            self.experts = FusedMoE(
+                num_experts=self.num_experts,
+                routing_method=RenormalizeMoeRoutingMethod(top_k=self.top_k),
+                hidden_size=self.hidden_dim,
+                intermediate_size=self.moe_intermediate_size,
+                aux_stream=aux_stream,
+                dtype=config.torch_dtype,
+                reduce_results=False,
+                model_config=model_config,
+            )
 
     def forward(
         self,
@@ -100,7 +163,7 @@ class Qwen3MoEDecoderLayer(DecoderLayer):
         self.mapping = model_config.mapping
         self.enable_attention_dp = self.mapping.enable_attention_dp
 
-        self.mlp = Qwen3MoE(model_config, aux_stream)
+        self.mlp = Qwen3MoE(model_config, aux_stream, layer_idx=layer_idx)
 
         self.input_layernorm = RMSNorm(hidden_size=config.hidden_size,
                                        eps=config.rms_norm_eps,
@@ -287,6 +350,7 @@ class Qwen3MoeForCausalLM(DecoderModelForCausalLM[Qwen3MoEModel,
             "qkv_proj": ["q_proj", "k_proj", "v_proj"],
             "gate_up_proj": ["gate_proj", "up_proj"]
         }
+        # import debugpy; debugpy.listen(("127.0.0.1", 12345)); debugpy.wait_for_client()        
         for name, module in tqdm(list(self.named_modules()),
                                  desc="Loading weights"):
             if len(module._parameters) > 0:

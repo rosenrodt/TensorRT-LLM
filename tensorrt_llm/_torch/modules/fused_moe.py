@@ -66,6 +66,12 @@ class DefaultMoeRoutingMethod(BaseMoeRoutingMethod):
         return topk_indices.to(torch.int32), topk_values
 
 
+class DeepSeekV3MoeRoutingMethod(BaseMoeRoutingMethod):
+    # Intentionally left blank. FusedMoE requires type information to distinguish DeepSeekV3 style routing.
+    # See comments in DeepseekV3Gate on why routing is done by DeepseekV3Gate.
+    pass
+
+
 class RenormalizeMoeRoutingMethod(BaseMoeRoutingMethod):
 
     def __init__(self, top_k: int):
@@ -1098,14 +1104,22 @@ class FusedMoE(nn.Module):
         assert self.is_trtllm()
         assert x.dtype == torch.bfloat16
 
+        # DeepSeekV3 style routing
+        if isinstance(self.routing_method, DeepSeekV3MoeRoutingMethod):
+            top_k = self.routing_method.routing_impl.top_k
+            routing_bias = self.routing_method.e_score_correction_bias
+            n_group = self.routing_method.routing_impl.n_group
+            topk_group = self.routing_method.routing_impl.topk_group
+            routed_scaling_factor = self.routing_method.routing_impl.routed_scaling_factor
+        else:
+            top_k = self.routing_method.top_k
+            routing_bias = None
+            n_group = None
+            topk_group = None
+            routed_scaling_factor = None
+
         # TODO: since routing kernel is integrated into moe_runner for fp8,
         #       here we just route the I/Os for moe_runner
-        routing_bias = self.routing_method.e_score_correction_bias
-        top_k = self.routing_method.routing_impl.top_k
-        n_group = self.routing_method.routing_impl.n_group
-        topk_group = self.routing_method.routing_impl.topk_group
-        routed_scaling_factor = self.routing_method.routing_impl.routed_scaling_factor
-
         if self.quant_config and self.quant_config.quant_mode.has_fp8_block_scales(
         ):
             x_val, x_scale = torch.ops.trtllm.fp8_quantize_1x128(x)
