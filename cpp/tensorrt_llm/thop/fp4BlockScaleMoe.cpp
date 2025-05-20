@@ -23,6 +23,7 @@
 namespace torch_ext
 {
 namespace tg = trtllm::gen;
+using tensorrt_llm::kernels::trtllmGenFp8BlockScaleMoe::Routing::RoutingMethodType;
 
 torch::Tensor fp4_block_scale_moe_runner(torch::Tensor const& routing_logits,
     torch::optional<torch::Tensor> const& routing_bias, torch::Tensor const& hidden_states,
@@ -33,7 +34,7 @@ torch::Tensor fp4_block_scale_moe_runner(torch::Tensor const& routing_logits,
     int64_t const num_experts, int64_t const top_k, std::optional<int64_t> const n_group,
     std::optional<int64_t> const topk_group, int64_t const intermediate_size,
     int64_t const local_expert_offset, int64_t const local_num_experts,
-    std::optional<double> const routed_scaling_factor)
+    std::optional<double> const routed_scaling_factor, int64_t const routing_method_type)
 {
     auto const sm = tensorrt_llm::common::getSMVersion();
     TORCH_CHECK(sm == 100, "Only SM100 is supported by FP4 block scale MOE");
@@ -134,6 +135,10 @@ torch::Tensor fp4_block_scale_moe_runner(torch::Tensor const& routing_logits,
     at::Tensor hidden_states_scale_linear = at::detail::empty_cuda(
         hidden_states_scale_linear_size, at::ScalarType::Float8_e4m3fn, hidden_states.device(), std::nullopt);
 
+    //
+    // TopK routing
+    //
+
     tensorrt_llm::kernels::trtllmGenFp8BlockScaleMoe::Routing::Runner routing_runner;
     auto const& stream = at::cuda::getCurrentCUDAStream(routing_logits.get_device());
     routing_runner.run(routing_logits.data_ptr<float>(), args.routing_bias, args.num_tokens, args.num_experts,
@@ -144,9 +149,12 @@ torch::Tensor fp4_block_scale_moe_runner(torch::Tensor const& routing_logits,
         permuted_idx_to_token_idx.data_ptr<int>(), expert_weights.data_ptr(), num_tokens_per_expert.data_ptr<int>(),
         cta_idx_xy_to_batch_idx.data_ptr<int>(), cta_idx_xy_to_mn_limit.data_ptr<int>(),
         num_non_exiting_ctas.data_ptr<int>(), args.mDtypeElt, false /* use_routing_scales_on_input */,
-        false /* use_deep_seek_fp8 */, stream);
+        false /* use_deep_seek_fp8 */, static_cast<RoutingMethodType>(routing_method_type), stream);
 
-    // MoE kernel except routing
+    //
+    // FC13 (gemm1) + FC2 (gemm2)
+    //
+
     TORCH_CHECK(hidden_states.scalar_type() == FLOAT4_E2M1X2, "hidden_states must be byte.");
     TORCH_CHECK(hidden_states_scale.scalar_type() == at::ScalarType::Float8_e4m3fn, "hidden_states_scale must be fp8.");
 
@@ -271,7 +279,8 @@ TORCH_LIBRARY_FRAGMENT(trtllm, m)
         "int intermediate_size,"
         "int local_expert_offset,"
         "int local_num_experts,"
-        "float? routed_scaling_factor) -> Tensor");
+        "float? routed_scaling_factor,"
+        "int routing_method_type) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(trtllm, CUDA, m)

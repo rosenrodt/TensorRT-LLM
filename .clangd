@@ -64,3 +64,5 @@ Diagnostics:
     # The NVHPC version of _NVCXX_EXPAND_PACK macro triggers this clang error.
     # Temporarily suppressing it, but should probably fix
     - "template_param_shadow"
+    - "readability-identifier-length" 
+

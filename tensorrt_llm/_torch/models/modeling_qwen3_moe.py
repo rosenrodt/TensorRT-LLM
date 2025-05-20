@@ -12,7 +12,7 @@ from ..model_config import ModelConfig
 from ..models.modeling_utils import (MissingLayer, rename_weights_with_regex)
 from ..modules.decoder_layer import DecoderLayer
 from ..modules.embedding import Embedding
-from ..modules.fused_moe import FusedMoE, RenormalizeMoeRoutingMethod, Llama4RenormalizeMoeRoutingMethod
+from ..modules.fused_moe import FusedMoE, RenormalizeMoeRoutingMethod, Qwen3MoeRoutingMethod
 from ..modules.linear import Linear, TensorParallelMode
 from ..modules.rms_norm import RMSNorm
 from .modeling_qwen3 import Qwen3Attention
@@ -91,13 +91,21 @@ class Qwen3MoE(nn.Module):
         )
 
         # NOTE ANT: debug: replace just single layer with TRTLLM backend for dev velocity
-        if layer_idx == -1:
+        if layer_idx == 1:
             # import debugpy; debugpy.listen(("127.0.0.1", 12345)); debugpy.wait_for_client()
             # NOTE ANT: debug: copy model_config and change moe_backend to TRTLLM
             import copy
             model_config_copy = copy.deepcopy(x=model_config)
             model_config_copy.moe_backend = "TRTLLM"
             model_config_copy.quant_config = model_config.quant_config # does deepcopy not copy this?
+            self.gate = Qwen3Gate(
+                hidden_size=self.hidden_dim,
+                num_experts=self.num_experts,
+                top_k=self.top_k,
+                dtype=config.torch_dtype,
+                apply_routing=False,
+                moe_backend=model_config_copy.moe_backend,
+            )
             self.experts = FusedMoE(
                 num_experts=self.num_experts,
                 routing_method=RenormalizeMoeRoutingMethod(top_k=self.top_k),
@@ -110,6 +118,17 @@ class Qwen3MoE(nn.Module):
             )
 
         else:
+            # MoE gate (linear layer). Wrap with a class to control output dtype.
+            # moe_backend="CUTLASS" outputs the same dtype as input
+            # moe_backend="TRTLLM" outputs higher precision torch.float32
+            self.gate = Qwen3Gate(
+                hidden_size=self.hidden_dim,
+                num_experts=self.num_experts,
+                top_k=self.top_k,
+                dtype=config.torch_dtype,
+                apply_routing=False,
+                moe_backend=model_config.moe_backend,
+            )
             self.experts = FusedMoE(
                 num_experts=self.num_experts,
                 routing_method=RenormalizeMoeRoutingMethod(top_k=self.top_k),

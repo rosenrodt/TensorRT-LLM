@@ -1,7 +1,7 @@
 import math
 import os
 import threading
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Dict, List, NamedTuple, Optional, Union
 
 import torch
@@ -29,6 +29,22 @@ FUSED_MOE_NVFP4_WEIGHT_DTYPE = torch.int64
 FUSED_MOE_NVFP4_WEIGHT_BLOCK_SCALE_DTYPE = torch.int32
 
 
+# The type of method in top-K routing, for use in torch custom op
+# Please keep sync with in cpp/tensorrt_llm/kernels/trtllmGenKernels/blockScaleMoe/runner.h
+class RoutingMethodType(IntEnum):
+    # Default: Softmax -> TopK
+    Default = 0,
+    # Renormalize: TopK -> Softmax
+    Renormalize = 1,
+    # DeepSeekV3: Sigmoid -> RoutingBiasAdd -> Top2 in group -> Top4 groups -> Top8 experts from the Top4 groups
+    DeepSeekV3 = 2,
+    # Llama4: Top1 -> Sigmoid
+    Llama4 = 3,
+    # Qwen3: Softmax -> TopK -> Renormalize
+    Qwen3 = 4,
+    # Unspecified
+    Unspecified = 5.
+
 class BaseMoeRoutingMethod(nn.Module):
 
     def apply(self, _router_logits) -> (torch.Tensor, torch.Tensor):
@@ -50,6 +66,10 @@ class BaseMoeRoutingMethod(nn.Module):
     def experts_per_token(self):
         return self.get_experts_per_token()
 
+    @property
+    def routing_method_type(self):
+        return RoutingMethodType.Unspecified
+
 
 class DefaultMoeRoutingMethod(BaseMoeRoutingMethod):
 
@@ -64,17 +84,31 @@ class DefaultMoeRoutingMethod(BaseMoeRoutingMethod):
                                                k=self.top_k,
                                                dim=-1)
         return topk_indices.to(torch.int32), topk_values
+    
+    @property
+    def routing_method_type(self):
+        return RoutingMethodType.Default
 
 
 class DeepSeekV3MoeRoutingMethod(BaseMoeRoutingMethod):
-    # Intentionally left blank. FusedMoE requires type information to distinguish DeepSeekV3 style routing.
+
+    # Intentionally leave apply() unimplemented.
     # See comments in DeepseekV3Gate on why routing is done by DeepseekV3Gate.
-    pass
+    def __init__(self, top_k: int):
+        super().__init__()
+        self.top_k = top_k
+
+    @property
+    def routing_method_type(self):
+        return RoutingMethodType.DeepSeekV3
 
 
 class RenormalizeMoeRoutingMethod(BaseMoeRoutingMethod):
 
-    def __init__(self, top_k: int):
+    def __init__(
+        self,
+        top_k: int,
+    ):
         super().__init__()
         self.top_k = top_k
 
@@ -85,6 +119,10 @@ class RenormalizeMoeRoutingMethod(BaseMoeRoutingMethod):
                                                dim=-1)
         return topk_indices.to(torch.int32), torch.nn.functional.softmax(
             topk_values.float(), dim=-1)
+
+    @property
+    def routing_method_type(self):
+        return RoutingMethodType.Renormalize
 
 
 class Llama4RenormalizeMoeRoutingMethod(BaseMoeRoutingMethod):
@@ -99,6 +137,10 @@ class Llama4RenormalizeMoeRoutingMethod(BaseMoeRoutingMethod):
                                                k=self.top_k,
                                                dim=-1)
         return topk_indices.to(torch.int32), torch.sigmoid(topk_values.float())
+
+    @property
+    def routing_method_type(self):
+        return RoutingMethodType.Llama4
 
 
 # TODO: re-enable this once the custom op is working.
@@ -219,6 +261,27 @@ class LoadBalancedMoeRoutingMethod(BaseMoeRoutingMethod):
                                         self.top_k).contiguous()
 
         return balanced_indices, balanced_values
+
+
+class Qwen3MoeRoutingMethod(RenormalizeMoeRoutingMethod):
+
+    def __init__(
+        self,
+        top_k: int
+    ):
+        super().__init__()
+        self.top_k = top_k
+        self.routing_method_type = RoutingMethodType.Qwen3
+
+    def apply(self,
+              router_logits: torch.Tensor) -> (torch.Tensor, torch.Tensor):
+
+        routing_weights = torch.nn.functional.softmax(router_logits, dim=1, dtype=torch.float)
+        topk_values, topk_indices = torch.topk(routing_weights,
+                                            k=self.top_k,
+                                            dim=-1)
+        topk_values /= topk_values.sum(dim=-1, keepdim=True)
+        return topk_indices.to(torch.int32), topk_values
 
 
 class MoEWeightLoadingMode(Enum):
@@ -1142,6 +1205,7 @@ class FusedMoE(nn.Module):
                 expert_start,  # local_expert_start;  use ep_rank if stride!=1
                 self.expert_size_per_partition,  # local_expert_size
                 routed_scaling_factor,
+                self.routing_method.routing_method_type,
             )
         elif self.quant_config and self.quant_config.quant_mode.has_nvfp4():
             scale_factor_use_ue8m0 = False
@@ -1171,6 +1235,7 @@ class FusedMoE(nn.Module):
                 expert_start,  # local_expert_start;  use ep_rank if stride!=1
                 self.expert_size_per_partition,  # local_expert_size
                 routed_scaling_factor,
+                self.routing_method.routing_method_type,
             )
         else:
             raise NotImplementedError(
