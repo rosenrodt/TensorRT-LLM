@@ -153,9 +153,10 @@ void Runner::run(void* routingLogits, void* routingBias, int32_t numTokens, int3
         //
         // Config
         //
-        routingData.mDtypeExpW = tg::Dtype::Fp32;
+        // TODO ANT: hardcode to bfloat16 for now; float32 somehow crashes atm
+        routingData.mDtypeExpW = tg::Dtype::Bfloat16;
         // TODO: Hardcoded for now; this should be a no-op as hidden_state is not input
-        routingData.mDtypeElt = tg::Dtype::Bfloat16; 
+        routingData.mDtypeElt = tg::Dtype::Bfloat16;
         routingData.mUsePdl = true;
         routingData.mNormTopkProb = routingMethodType == RoutingMethodType::Renormalize;
         routingData.mPtrScores = routingLogits;
@@ -188,7 +189,7 @@ void Runner::run(void* routingLogits, void* routingBias, int32_t numTokens, int3
         routingData.mLocalExpertsStrideLog2 = 0;
         routingData.mNumLocalExperts = localNumExperts;
 
-        // TODO: expose Qwen3 routing flow "outingMethodType::Qwen3" in routingQwen3::run()
+        // TODO: expose Qwen3 routing flow "RoutingMethodType::Qwen3" in routingQwen3::run()
         moe::dev::routingQwen3::run(routingData, stream);
     }
     else

@@ -123,22 +123,9 @@ namespace moe::dev
         LAUNCH_PDL(                                                                                                    \
             data, false, LAUCNCH_ESC(cutlass::bfloat16_t, float), kernel, numBlocks, numThreads, smemSize, stream);    \
     }                                                                                                                  \
-    else if (data.mDtypeElt == tg::Dtype::Bfloat16 && data.mDtypeExpW == tg::Dtype::Bfloat16)                          \
+    else if (data.mDtypeElt == tg::Dtype::Fp32 && data.mDtypeExpW == tg::Dtype::Fp32)                                  \
     {                                                                                                                  \
-        LAUNCH_PDL(data, false, LAUCNCH_ESC(cutlass::bfloat16_t, cutlass::bfloat16_t), kernel, numBlocks, numThreads,  \
-            smemSize, stream);                                                                                         \
-    }                                                                                                                  \
-    else                                                                                                               \
-    {                                                                                                                  \
-        TLLM_LOG_ERROR("Unsupported pair (dtypeElt: %s, dtypeExpW: %s)", tg::dtypeToString(data.mDtypeElt).c_str(),    \
-            tg::dtypeToString(data.mDtypeExpW).c_str());                                                               \
-    }
-
-#define LAUNCH_EXPW_QWEN3(data, kernel, numBlocks, numThreads, smemSize, stream)                                       \
-    if (data.mDtypeElt == tg::Dtype::Bfloat16 && data.mDtypeExpW == tg::Dtype::Fp32)                                   \
-    {                                                                                                                  \
-        LAUNCH_PDL(                                                                                                    \
-            data, false, LAUCNCH_ESC(cutlass::bfloat16_t, float), kernel, numBlocks, numThreads, smemSize, stream);    \
+        LAUNCH_PDL(data, false, LAUCNCH_ESC(float, float), kernel, numBlocks, numThreads, smemSize, stream);           \
     }                                                                                                                  \
     else if (data.mDtypeElt == tg::Dtype::Bfloat16 && data.mDtypeExpW == tg::Dtype::Bfloat16)                          \
     {                                                                                                                  \

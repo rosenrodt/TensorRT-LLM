@@ -32,13 +32,15 @@ torch::Tensor fp4_block_scale_moe_runner(torch::Tensor const& routing_logits,
     torch::Tensor const& gemm2_weights_scale, torch::Tensor const& output1_scales_scalar,
     torch::Tensor const& output1_scales_gate_scalar, torch::Tensor const& output2_scales_scalar,
     int64_t const num_experts, int64_t const top_k, std::optional<int64_t> const n_group,
-    std::optional<int64_t> const topk_group, int64_t const intermediate_size,
-    int64_t const local_expert_offset, int64_t const local_num_experts,
-    std::optional<double> const routed_scaling_factor, int64_t const routing_method_type)
+    std::optional<int64_t> const topk_group, int64_t const intermediate_size, int64_t const local_expert_offset,
+    int64_t const local_num_experts, std::optional<double> const routed_scaling_factor,
+    int64_t const routing_method_type)
 {
     auto const sm = tensorrt_llm::common::getSMVersion();
     TORCH_CHECK(sm == 100, "Only SM100 is supported by FP4 block scale MOE");
-    TORCH_CHECK(routing_logits.scalar_type() == at::ScalarType::Float, "routing_logits must be float.");
+    TORCH_CHECK(routing_logits.scalar_type() == at::ScalarType::Float
+            || routing_logits.scalar_type() == at::ScalarType::BFloat16,
+        "routing_logits must be float or bfloat16.");
     TORCH_CHECK(routing_logits.dim() == 2, "routing_logits must be 2D.");
     TORCH_CHECK(routing_logits.sizes()[1] == num_experts, "routing_logits has incorrect shape.");
     if (routing_bias.has_value())
@@ -69,7 +71,7 @@ torch::Tensor fp4_block_scale_moe_runner(torch::Tensor const& routing_logits,
 
     // setup args
     args.mDtypeElt = tg::Dtype::E2m1;
-    args.routing_logits = routing_logits.data_ptr<float>();
+    args.routing_logits = routing_logits.data_ptr();
     args.routing_bias = routing_bias.has_value() ? routing_bias.value().data_ptr() : nullptr;
     args.hidden_states = hidden_states.data_ptr();
     args.hidden_states_scale = hidden_states_scale.data_ptr();
@@ -141,7 +143,7 @@ torch::Tensor fp4_block_scale_moe_runner(torch::Tensor const& routing_logits,
 
     tensorrt_llm::kernels::trtllmGenFp8BlockScaleMoe::Routing::Runner routing_runner;
     auto const& stream = at::cuda::getCurrentCUDAStream(routing_logits.get_device());
-    routing_runner.run(routing_logits.data_ptr<float>(), args.routing_bias, args.num_tokens, args.num_experts,
+    routing_runner.run(args.routing_logits, args.routing_bias, args.num_tokens, args.num_experts,
         args.top_k, args.n_group, args.topk_group, args.local_expert_offset, args.local_num_experts,
         args.routed_scaling_factor, expert_indexes.data_ptr<int>(), expert_count_histogram.data_ptr<int>(),
         total_num_padded_tokens.data_ptr<int>(), expanded_idx_to_permuted_idx.data_ptr<int>(),

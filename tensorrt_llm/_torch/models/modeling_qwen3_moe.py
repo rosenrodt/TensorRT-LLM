@@ -38,7 +38,9 @@ class Qwen3Gate(RenormalizeMoeRoutingMethod):
             torch.empty((num_experts, hidden_size), dtype=dtype), requires_grad=False
         )
         self.moe_backend = moe_backend
-        self.out_dtype = torch.float32 if moe_backend == "TRTLLM" else dtype
+        # TODO ANT: atm only out_dtype=bfloat16 works.
+        # self.out_dtype = torch.float32 if moe_backend == "TRTLLM" else dtype
+        self.out_dtype = dtype
 
         assert not apply_routing, "Qwen3Gate routing is called inside MoE"
 
@@ -93,7 +95,6 @@ class Qwen3MoE(nn.Module):
         # NOTE ANT: debug: replace just single layer with TRTLLM backend for dev velocity
         if layer_idx == 1:
             # import debugpy; debugpy.listen(("127.0.0.1", 12345)); debugpy.wait_for_client()
-            # NOTE ANT: debug: copy model_config and change moe_backend to TRTLLM
             import copy
             model_config_copy = copy.deepcopy(x=model_config)
             model_config_copy.moe_backend = "TRTLLM"
