@@ -38,7 +38,7 @@ class Qwen3Gate(RenormalizeMoeRoutingMethod):
             torch.empty((num_experts, hidden_size), dtype=dtype), requires_grad=False
         )
         self.moe_backend = moe_backend
-        self.out_dtype = out_dtype = torch.float32 if moe_backend == "TRTLLM" else dtype
+        self.out_dtype = torch.float32 if moe_backend == "TRTLLM" else dtype
 
         assert not apply_routing, "Qwen3Gate routing is called inside MoE"
 

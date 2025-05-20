@@ -153,8 +153,9 @@ void Runner::run(void* routingLogits, void* routingBias, int32_t numTokens, int3
         //
         // Config
         //
-        routingData.mDtypeExpW = tg::Dtype::Bfloat16;
-        routingData.mDtypeElt = dtypeElt;
+        routingData.mDtypeExpW = tg::Dtype::Fp32;
+        // TODO: Hardcoded for now; this should be a no-op as hidden_state is not input
+        routingData.mDtypeElt = tg::Dtype::Bfloat16; 
         routingData.mUsePdl = true;
         routingData.mNormTopkProb = routingMethodType == RoutingMethodType::Renormalize;
         routingData.mPtrScores = routingLogits;
