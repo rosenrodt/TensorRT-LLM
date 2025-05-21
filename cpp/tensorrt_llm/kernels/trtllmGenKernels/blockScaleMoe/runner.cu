@@ -146,16 +146,25 @@ void Runner::run(void* routingLogits, void* routingBias, int32_t numTokens, int3
         // routingData.mUseRoutingSoftmax = false;
         moe::dev::routingLlama4::run(routingData, stream);
     }
-    else if (routingMethodType == RoutingMethodType::Renormalize || routingMethodType == RoutingMethodType::Qwen3)
+    else if (routingMethodType == RoutingMethodType::Renormalize /* default */
+        || routingMethodType == RoutingMethodType::Qwen3 /* Softmax -> TopK */)
     {
         moe::dev::routingQwen3::Data routingData;
 
         //
         // Config
         //
-        // TODO ANT: hardcode to bfloat16 for now; float32 somehow crashes atm
-        routingData.mDtypeExpW = tg::Dtype::Bfloat16;
-        // TODO: Hardcoded for now; this should be a no-op as hidden_state is not input
+        // (mDtypeElt=bf16, mDtypeExpW=bf16): OK
+        // (mDtypeElt=bf16, mDtypeExpW=fp32): OK
+        // (mDtypeElt=fp32, mDtypeExpW=fp32): Crash but considered lower prio
+        //
+        // TODO: clean up
+        // The Qwen3 routing kernel overloads the meaning of mDtypeExpW as the internal compute type.
+        // It's original meaning is routingLogits dtype
+        routingData.mDtypeExpW = tg::Dtype::Fp32;
+        // TODO: clean up
+        // The Qwen3 routing kernel overloads the meaning of mDtypeElt as the dtype of routingLogits.
+        // It's original meaning is hidden_state dtype. This should be a no-op as hidden_state is no longer an input.
         routingData.mDtypeElt = tg::Dtype::Bfloat16;
         routingData.mUsePdl = true;
         routingData.mNormTopkProb = routingMethodType == RoutingMethodType::Renormalize;
