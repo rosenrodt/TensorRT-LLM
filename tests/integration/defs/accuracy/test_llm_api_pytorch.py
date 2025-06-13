@@ -1405,12 +1405,15 @@ class TestQwen3_235B_A22B(LlmapiAccuracyTestHarness):
     @skip_pre_blackwell
     @pytest.mark.parametrize(
         "tp_size,pp_size,ep_size,attention_dp,cuda_graph,overlap_scheduler",
-        [(8, 1, 8, True, True, True), (8, 1, 8, False, True, True)],
-        ids=["latency", "throughput_latency"])
+        [(8, 1, 8, True, True, True, "CUTLASS"),
+         (8, 1, 8, False, True, True, "CUTLASS"),
+         (8, 1, 4, False, True, True, "TRTLLM")],
+        ids=["latency", "throughput_latency", "throughput_latency_trtllm"])
     def test_nvfp4(self, tp_size, pp_size, ep_size, attention_dp, cuda_graph,
-                   overlap_scheduler):
+                   overlap_scheduler, moe_backend):
         pytorch_config = dict(disable_overlap_scheduler=not overlap_scheduler,
-                              use_cuda_graph=cuda_graph)
+                              use_cuda_graph=cuda_graph,
+                              moe_backend=moe_backend)
 
         llm = LLM(
             f"{llm_models_root()}/Qwen3/saved_models_Qwen3-235B-A22B_nvfp4_hf",
