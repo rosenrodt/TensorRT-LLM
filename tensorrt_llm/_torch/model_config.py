@@ -272,27 +272,54 @@ class ModelConfig(Generic[TConfig]):
             'exclude_modules', None)
 
         if quant_config.quant_algo == QuantAlgo.MIXED_PRECISION:
-            mixed_quant_config_file = model_dir / 'quant_cfg.json'
-            with open(mixed_quant_config_file) as fm:
-                mixed_quant_configs = json.load(fm)
-                # kv_cache_quant_algo is global regardless of MIXED_PRECISION
-                kv_cache_quant_algo = mixed_quant_configs['kv_cache_quant_algo']
-                mixed_quant_configs = mixed_quant_configs['quantized_layers']
-                if kv_cache_quant_algo is not None and quant_config.kv_cache_quant_algo is not None:
-                    if kv_cache_quant_algo != quant_config.kv_cache_quant_algo:
-                        raise RuntimeError(
-                            f"The kvcache config in 'quant_cfg.json', {kv_cache_quant_algo},"
-                            f"is different from 'hf_quant_config.json', {quant_config.kv_cache_quant_algo}!"
-                        )
-                kv_cache_quant_algo = kv_cache_quant_algo or quant_config.kv_cache_quant_algo
+            try:
+                # quant_cfg.json has 'quantized_layers' as top level dict
+                # {
+                #     "quantized_layers": {
+                #         "model.layers.0.self_attn.q_proj": {
+                #             "quant_algo": "FP8"
+                #         },
+                #         ...
+                #     }
+                # }
+                mixed_quant_config_file = model_dir / 'quant_cfg.json'
+                with open(mixed_quant_config_file) as fm:
+                    quant_cfg = json.load(fm)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load quant_cfg.json, trying hf_quant_config.json: {e}"
+                )
+                # hf_quant_config.json has 'quantized_layers' one level down under 'quantization'
+                # {
+                #     "quantization": {
+                #         "quant_algo": "MIXED_PRECISION"
+                #         "quantized_layers": {
+                #             "model.layers.0.self_attn.q_proj": {
+                #                 "quant_algo": "FP8"
+                #             },
+                #             ...
+                #         }
+                #     }
+                # }
+                quant_cfg = json_quant_configs
+            # kv_cache_quant_algo is global regardless of MIXED_PRECISION
+            kv_cache_quant_algo = quant_cfg['kv_cache_quant_algo']
+            mixed_quant_configs = quant_cfg['quantized_layers']
+            if kv_cache_quant_algo is not None and quant_config.kv_cache_quant_algo is not None:
+                if kv_cache_quant_algo != quant_config.kv_cache_quant_algo:
+                    raise RuntimeError(
+                        f"The kvcache config in 'quant_cfg.json', {kv_cache_quant_algo},"
+                        f"is different from 'hf_quant_config.json', {quant_config.kv_cache_quant_algo}!"
+                    )
+            kv_cache_quant_algo = kv_cache_quant_algo or quant_config.kv_cache_quant_algo
 
-                for layer in mixed_quant_configs:
-                    config = QuantConfig()
-                    config.kv_cache_quant_algo = kv_cache_quant_algo
-                    config.quant_algo = mixed_quant_configs[layer]['quant_algo']
-                    config.group_size = mixed_quant_configs[layer].get(
-                        'group_size', None)
-                    mixed_quant_configs[layer] = config
+            for layer in mixed_quant_configs:
+                config = QuantConfig()
+                config.kv_cache_quant_algo = kv_cache_quant_algo
+                config.quant_algo = mixed_quant_configs[layer]['quant_algo']
+                config.group_size = mixed_quant_configs[layer].get(
+                    'group_size', None)
+                mixed_quant_configs[layer] = config
             layer_quant_config = mixed_quant_configs
         elif quant_config.quant_algo == QuantAlgo.FP8_BLOCK_SCALES:
             if quant_config.group_size is None:
