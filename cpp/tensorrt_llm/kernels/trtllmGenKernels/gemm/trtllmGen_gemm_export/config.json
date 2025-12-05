@@ -38,19 +38,41 @@
             "patchF2fp": false,
             "dtypeA": "e2m1",
             "dtypeC": "e2m1",
-            "mmaM": 128,
-            "mmaN": 128,
+            "mmaM": 256,
             "mmaK": 64,
             "tileM": 128,
-            "tileN": 128,
-            "tileK": 256,
             "epilogueTileM": 128,
-            "epilogueTileN": 128,
-            "numStages": 3,
-            "numStagesMma": 1,
             "numSlicesForSplitK": 1,
             "useTwoTmaLoadWarps": true,
-            "clusterDimX": 1,
+            "clusterDimX": 2,
+            "clusterDimY": 1,
+            "clusterDimZ": 1,
+            "sliceK": false,
+            "transposeMmaOutput": false,
+            "useShuffledMatrixA": false,
+            "useDeepSeekFp8": false,
+            "useTmaStore": true,
+            "useCustomMmaSchedule": true,
+            "sfLayoutB": "128x4",
+            "sfLayoutC": "128x4",
+            "gridTriggerSecondaryA": true,
+            "gridTriggerSecondaryB": false,
+            "gridWaitForPrimaryA": true,
+            "gridWaitForPrimaryB": false,
+            "usePdl": true
+        },
+        "GemmMxFp8Throughput": {
+            "smVersion": "100f",
+            "patchF2fp": false,
+            "dtypeA": "mxe4m3",
+            "dtypeC": "mxe4m3",
+            "mmaM": 256,
+            "mmaK": 64,
+            "tileM": 128,
+            "epilogueTileM": 128,
+            "numSlicesForSplitK": 1,
+            "useTwoTmaLoadWarps": true,
+            "clusterDimX": 2,
             "clusterDimY": 1,
             "clusterDimZ": 1,
             "sliceK": false,
@@ -298,8 +320,25 @@
     },
     "configs": [
         {
+            "_template": "GemmMxFp8Throughput",
+            "dtypeC": ["bf16", "fp16", "mxe4m3"],
+            "mmaN,tileN,tileK,epilogueTileN,numStages,numStagesMma,fuseUtccpWithUtcmma,useMaxTmemOverlap": [
+                [256, 256, 256, 128, 3, 1, true, true],
+                [256, 256, 256,  64, 4, 2, false, false],
+                [256, 256, 128, 128, 6, 2, true, true],
+                [128, 128, 256,  64, 4, 2, false, false]
+            ],
+            "eltwiseActType": ["none", "gelu"]
+        },
+        {
             "_template": "GemmFp4Throughput",
-            "dtypeC": ["bf16", "fp16", "fp32"]
+            "dtypeC": ["bf16", "fp16", "fp32"],
+            "mmaN,tileN,tileK,epilogueTileN,numStages,numStagesMma,fuseUtccpWithUtcmma,useMaxTmemOverlap": [
+                [256, 256, 256, 128, 5, 1, true, true],
+                [256, 256, 128, 128, 3, 1, true, true],
+                [128, 128, 256,  64, 6, 2, false, false]
+            ],
+            "eltwiseActType": ["none", "gelu"]
         },
         {
             "_template": "GemmPerTensorScalingFp8Throughput",
@@ -372,7 +411,13 @@
             "_comment": "Tile 8 to 128",
             "dtypeC": ["bf16", "fp16", "e4m3"],
             "useUnrollLoop2xForMma": [true, false],
-            "mmaN,tileN,epilogueTileN,tileK,numSlicesForSplitK,clusterDimZ": [[8, 8, 8, 512, 2, 2], [16, 16, 16, 512, 2, 2], [32, 32, 32, 512, 2, 2], [64, 64, 64, 512, 2, 2], [128, 128, 128, 256, 1, 1]]
+            "mmaN,tileN,epilogueTileN,tileK,numSlicesForSplitK,clusterDimZ": [
+                [  8,   8,   8, 512, 2, 2],
+                [ 16,  16,  16, 512, 2, 2],
+                [ 32,  32,  32, 512, 2, 2],
+                [ 64,  64,  64, 512, 2, 2],
+                [128, 128, 128, 256, 1, 1]
+            ]
         }
     ]
 }
