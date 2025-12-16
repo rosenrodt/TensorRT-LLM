@@ -3015,10 +3015,6 @@ void CutlassMoeFCRunner<T, WeightType, OutputType, InputType, BackBoneType, Enab
             : use_fp8                           ? quant_params.fp8.fc2_use_per_expert_act_scale
             : Self::useAwq(quant_params)        ? quant_params.groupwise.fc2.use_per_expert_act_scale
                                                 : false;
-        printf(
-            "DEBUG ANT: use_awq %d, use_per_expert_act_scale %d, quant_params.groupwise.fc2.use_per_expert_act_scale "
-            "%d\n",
-            Self::useAwq(quant_params), use_per_expert_act_scale, quant_params.groupwise.fc2.use_per_expert_act_scale);
         // Activation -> (BackboneType) -> Prequant -> (T == ActType)
         // When fusing activation and prequant, the output type is directly T = =ActType
         // Else, the output type is BackboneType
