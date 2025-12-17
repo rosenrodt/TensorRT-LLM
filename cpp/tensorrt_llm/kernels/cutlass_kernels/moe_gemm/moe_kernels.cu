@@ -2329,86 +2329,7 @@ void doActivation(T* output, GemmOutputType const* gemm_result, float const* fp8
     bool use_per_expert_act_scale, TmaWarpSpecializedGroupedGemmInput::ElementSF* fc2_act_sf_flat, cudaStream_t stream,
     GemmOutputType const* prequant_scale = nullptr)
 {
-    // Number of consecutive tokens processed by each CTA, promoting per-expert data reuse
-    constexpr static int ACTIVATION_PROCESS_ROWS = 4;
-
-    // For NVFP4/MXFPX SFs
-    int64_t num_padding_tokens = 0;
-
-    auto fn = [&]()
-    {
-        // IMPORTANT: Keep the order of the activation functions in the same order as the ActivationType enum in
-        // common.h
-        auto fn = [&](auto block_scaling_type) -> void (*)(T*, GemmOutputType const*, float const*,
-                                                   ScaleBiasType const*, bool, int64_t const*, int, int64_t,
-                                                   float const*, bool, TmaWarpSpecializedGroupedGemmInput::ElementSF*,
-                                                   ActivationParams, GemmOutputType const*, int64_t)
-        {
-            switch (activation_type.activation_type)
-            {
-            case ActivationType::Identity:
-                return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
-                    IdentityAdaptor<cutlass::epilogue::thread::Identity>, decltype(block_scaling_type)::value,
-                    ACTIVATION_PROCESS_ROWS>;
-            case ActivationType::Gelu:
-                return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
-                    IdentityAdaptor<cutlass::epilogue::thread::GELU>, decltype(block_scaling_type)::value,
-                    ACTIVATION_PROCESS_ROWS>;
-            case ActivationType::Relu:
-                return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
-                    IdentityAdaptor<cutlass::epilogue::thread::ReLu>, decltype(block_scaling_type)::value,
-                    ACTIVATION_PROCESS_ROWS>;
-            case ActivationType::Silu:
-                return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
-                    IdentityAdaptor<cutlass::epilogue::thread::SiLu>, decltype(block_scaling_type)::value,
-                    ACTIVATION_PROCESS_ROWS>;
-            case ActivationType::Swiglu:
-                return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
-                    GLUAdaptor<cutlass::epilogue::thread::SiLu>, decltype(block_scaling_type)::value,
-                    ACTIVATION_PROCESS_ROWS>;
-            case ActivationType::Geglu:
-                return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
-                    GLUAdaptor<cutlass::epilogue::thread::GELU>, decltype(block_scaling_type)::value,
-                    ACTIVATION_PROCESS_ROWS>;
-            case ActivationType::SwigluBias:
-                return &doActivationKernel<T, GemmOutputType, ScaleBiasType, SwigluBiasAdaptor,
-                    decltype(block_scaling_type)::value, ACTIVATION_PROCESS_ROWS>;
-            case ActivationType::Relu2:
-                return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
-                    IdentityAdaptor<cutlass::epilogue::thread::Relu2>, decltype(block_scaling_type)::value,
-                    ACTIVATION_PROCESS_ROWS>;
-            default: TLLM_CHECK_WITH_INFO(false, "Invalid activation type"); return nullptr;
-            }
-        };
-        auto NVFP4 = tensorrt_llm::common::ConstExprWrapper<TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType,
-            TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType::NVFP4>{};
-        auto MXFPX = tensorrt_llm::common::ConstExprWrapper<TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType,
-            TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType::MXFPX>{};
-        auto NONE = tensorrt_llm::common::ConstExprWrapper<TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType,
-            TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType::NONE>{};
-#ifdef ENABLE_FP4
-        if constexpr (std::is_same_v<T, __nv_fp4_e2m1>)
-        {
-            num_padding_tokens = TmaWarpSpecializedGroupedGemmInput::MinNDimAlignmentNVFP4 * num_experts_per_node;
-            TLLM_CHECK_WITH_INFO(
-                quant_params.fp4.fc2.weight_block_scale, "NVFP4 block scaling is expected for FP4xFP4");
-            return fn(NVFP4);
-        }
-        else if constexpr (std::is_same_v<T, __nv_fp8_e4m3>)
-        {
-            num_padding_tokens = quant_params.mxfp8_mxfp4.fc2.weight_block_scale
-                ? TmaWarpSpecializedGroupedGemmInput::MinNDimAlignmentMXFPX * num_experts_per_node
-                : 0;
-            return quant_params.mxfp8_mxfp4.fc2.weight_block_scale ? fn(MXFPX) : fn(NONE);
-        }
-        else
-#endif
-        {
-            return fn(NONE);
-        }
-    }();
-
-    // Compute ACTIVATION_ELEM_PER_THREAD to match kernel's computation for grid calculation
+// Compute ACTIVATION_ELEM_PER_THREAD to match kernel's computation for grid calculation
 #ifdef ENABLE_FP4
     constexpr bool IsNVFP4 = std::is_same_v<T, __nv_fp4_e2m1>;
     constexpr bool IsMXFP8 = std::is_same_v<T, __nv_fp8_e4m3>;
@@ -2422,29 +2343,125 @@ void doActivation(T* output, GemmOutputType const* gemm_result, float const* fp8
 
     int64_t const num_elems_in_col = inter_size / ACTIVATION_ELEM_PER_THREAD;
 
-    // printf("DEBUG ANT: num_token_blocks %ld, num_padding_blocks %ld\n", expanded_num_tokens, num_padding_tokens);
+    auto launcher = [&](auto num_rows_per_cta)
+    {
+        constexpr int num_rows_per_cta_v = num_rows_per_cta.value;
 
-    // 2D grid: X dimension for tokens in groups of ACTIVATION_PROCESS_ROWS, Y dimension for columns
-    // Add extra blocks for N-dimension padding in FP4/MXFP8 modes
-    int64_t const num_token_blocks = (expanded_num_tokens + ACTIVATION_PROCESS_ROWS - 1) / ACTIVATION_PROCESS_ROWS;
-    int64_t const num_padding_blocks = (num_padding_tokens + ACTIVATION_PROCESS_ROWS - 1) / ACTIVATION_PROCESS_ROWS;
-    int32_t const grid_x = static_cast<int32_t>(num_token_blocks + num_padding_blocks);
-    int32_t const grid_y = static_cast<int32_t>((num_elems_in_col + ACTIVATION_THREADS_PER_BLOCK - 1) / ACTIVATION_THREADS_PER_BLOCK);
-    int32_t const threads = ACTIVATION_THREADS_PER_BLOCK;
+        // For NVFP4/MXFPX SFs
+        int64_t num_padding_tokens = 0;
+        auto fn = [&]()
+        {
+            // IMPORTANT: Keep the order of the activation functions in the same order as the ActivationType enum in
+            // common.h
+            auto fn
+                = [&](auto block_scaling_type) -> void (*)(T*, GemmOutputType const*, float const*,
+                                                   ScaleBiasType const*, bool, int64_t const*, int, int64_t,
+                                                   float const*, bool, TmaWarpSpecializedGroupedGemmInput::ElementSF*,
+                                                   ActivationParams, GemmOutputType const*, int64_t)
+            {
+                switch (activation_type.activation_type)
+                {
+                case ActivationType::Identity:
+                    return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
+                        IdentityAdaptor<cutlass::epilogue::thread::Identity>, decltype(block_scaling_type)::value,
+                        num_rows_per_cta_v>;
+                case ActivationType::Gelu:
+                    return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
+                        IdentityAdaptor<cutlass::epilogue::thread::GELU>, decltype(block_scaling_type)::value,
+                        num_rows_per_cta_v>;
+                case ActivationType::Relu:
+                    return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
+                        IdentityAdaptor<cutlass::epilogue::thread::ReLu>, decltype(block_scaling_type)::value,
+                        num_rows_per_cta_v>;
+                case ActivationType::Silu:
+                    return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
+                        IdentityAdaptor<cutlass::epilogue::thread::SiLu>, decltype(block_scaling_type)::value,
+                        num_rows_per_cta_v>;
+                case ActivationType::Swiglu:
+                    return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
+                        GLUAdaptor<cutlass::epilogue::thread::SiLu>, decltype(block_scaling_type)::value,
+                        num_rows_per_cta_v>;
+                case ActivationType::Geglu:
+                    return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
+                        GLUAdaptor<cutlass::epilogue::thread::GELU>, decltype(block_scaling_type)::value,
+                        num_rows_per_cta_v>;
+                case ActivationType::SwigluBias:
+                    return &doActivationKernel<T, GemmOutputType, ScaleBiasType, SwigluBiasAdaptor,
+                        decltype(block_scaling_type)::value, num_rows_per_cta_v>;
+                case ActivationType::Relu2:
+                    return &doActivationKernel<T, GemmOutputType, ScaleBiasType,
+                        IdentityAdaptor<cutlass::epilogue::thread::Relu2>, decltype(block_scaling_type)::value,
+                        num_rows_per_cta_v>;
+                default: TLLM_CHECK_WITH_INFO(false, "Invalid activation type"); return nullptr;
+                }
+            };
+            auto NVFP4 = tensorrt_llm::common::ConstExprWrapper<TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType,
+                TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType::NVFP4>{};
+            auto MXFPX = tensorrt_llm::common::ConstExprWrapper<TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType,
+                TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType::MXFPX>{};
+            auto NONE = tensorrt_llm::common::ConstExprWrapper<TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType,
+                TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType::NONE>{};
+#ifdef ENABLE_FP4
+            if constexpr (std::is_same_v<T, __nv_fp4_e2m1>)
+            {
+                num_padding_tokens = TmaWarpSpecializedGroupedGemmInput::MinNDimAlignmentNVFP4 * num_experts_per_node;
+                TLLM_CHECK_WITH_INFO(
+                    quant_params.fp4.fc2.weight_block_scale, "NVFP4 block scaling is expected for FP4xFP4");
+                return fn(NVFP4);
+            }
+            else if constexpr (std::is_same_v<T, __nv_fp8_e4m3>)
+            {
+                num_padding_tokens = quant_params.mxfp8_mxfp4.fc2.weight_block_scale
+                    ? TmaWarpSpecializedGroupedGemmInput::MinNDimAlignmentMXFPX * num_experts_per_node
+                    : 0;
+                return quant_params.mxfp8_mxfp4.fc2.weight_block_scale ? fn(MXFPX) : fn(NONE);
+            }
+            else
+#endif
+            {
+                return fn(NONE);
+            }
+        }();
 
-    cudaLaunchConfig_t config;
-    config.gridDim = dim3(grid_x, grid_y, 1);
-    config.blockDim = threads;
-    config.dynamicSmemBytes = 0;
-    config.stream = stream;
-    cudaLaunchAttribute attrs[1];
-    attrs[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
-    attrs[0].val.programmaticStreamSerializationAllowed = tensorrt_llm::common::getEnvEnablePDL();
-    config.numAttrs = 1;
-    config.attrs = attrs;
-    cudaLaunchKernelEx(&config, fn, output, gemm_result, fp8_quant, bias, bias_is_broadcast, expert_first_token_offset,
-        num_experts_per_node, inter_size, quant_params.fp4.fc2.act_global_scale, use_per_expert_act_scale,
-        fc2_act_sf_flat, activation_type, prequant_scale, expanded_num_tokens);
+        // printf("DEBUG ANT: num_token_blocks %ld, num_padding_blocks %ld\n", expanded_num_tokens, num_padding_tokens);
+
+        // 2D grid: X dimension for tokens in groups of num_rows_per_cta_v, Y dimension for columns
+        // Add extra blocks for N-dimension padding in FP4/MXFP8 modes
+        int64_t const num_token_blocks = (expanded_num_tokens + num_rows_per_cta_v - 1) / num_rows_per_cta_v;
+        int64_t const num_padding_blocks = (num_padding_tokens + num_rows_per_cta_v - 1) / num_rows_per_cta_v;
+        int32_t const grid_x = static_cast<int32_t>(num_token_blocks + num_padding_blocks);
+        int32_t const grid_y = static_cast<int32_t>(
+            (num_elems_in_col + ACTIVATION_THREADS_PER_BLOCK - 1) / ACTIVATION_THREADS_PER_BLOCK);
+        int32_t const threads = ACTIVATION_THREADS_PER_BLOCK;
+
+        cudaLaunchConfig_t config;
+        config.gridDim = dim3(grid_x, grid_y, 1);
+        config.blockDim = threads;
+        config.dynamicSmemBytes = 0;
+        config.stream = stream;
+        cudaLaunchAttribute attrs[1];
+        attrs[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+        attrs[0].val.programmaticStreamSerializationAllowed = tensorrt_llm::common::getEnvEnablePDL();
+        config.numAttrs = 1;
+        config.attrs = attrs;
+
+        cudaLaunchKernelEx(&config, fn, output, gemm_result, fp8_quant, bias, bias_is_broadcast,
+            expert_first_token_offset, num_experts_per_node, inter_size, quant_params.fp4.fc2.act_global_scale,
+            use_per_expert_act_scale, fc2_act_sf_flat, activation_type, prequant_scale, expanded_num_tokens);
+    }; // end lambda launcher
+
+    if (num_elems_in_col * expanded_num_tokens < 256)
+    {
+        launcher(std::integral_constant<int, 1>());
+    }
+    else if (num_elems_in_col * expanded_num_tokens < 512)
+    {
+        launcher(std::integral_constant<int, 2>());
+    }
+    else
+    {
+        launcher(std::integral_constant<int, 4>());
+    }
 }
 
 // ============================== Lora Add Bias =================================
