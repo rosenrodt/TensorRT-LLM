@@ -2458,9 +2458,13 @@ void doActivation(T* output, GemmOutputType const* gemm_result, float const* fp8
     {
         launcher(std::integral_constant<int, 2>());
     }
-    else
+    else if (num_elems_in_col * expanded_num_tokens < 512 * 512)
     {
         launcher(std::integral_constant<int, 4>());
+    }
+    else
+    {
+        launcher(std::integral_constant<int, 8>());
     }
 }
 
