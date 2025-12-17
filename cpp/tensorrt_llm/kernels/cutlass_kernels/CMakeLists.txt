@@ -254,6 +254,8 @@ if(USING_OSS_CUTLASS_MOE_GEMM)
 
   add_library(_moe_gemm_launcher OBJECT ${MOE_GEMM_SRC_CU_LAUNCHER})
   add_cuda_architectures(_moe_gemm_launcher 89)
+  target_compile_options(_moe_gemm_launcher PRIVATE -lineinfo)
+
 
   add_library(_moe_gemm_hopper_fp4 OBJECT ${MOE_GEMM_SRC_CU_HOPPER_FP4})
   set_cuda_architectures(_moe_gemm_hopper_fp4 90)

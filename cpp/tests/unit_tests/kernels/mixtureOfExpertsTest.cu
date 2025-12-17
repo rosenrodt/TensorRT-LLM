@@ -185,6 +185,8 @@ protected:
 
     // FP4 uses the unquantized data type for inputs and quantizes on the fly
     using DataType = std::conditional_t<NVFP4 || MXFP8_MXFP4, OutputType, GemmDataType>;
+    //
+    using ScaleType = std::conditional_t<W4A8_AWQ, WeightScale, DataType>;
 
     // FP8_MXFP4 quantizes just the weights on the fly
     using WeightRawType = std::conditional_t<FP8_MXFP4 || W4A8_AWQ, OutputType, DataType>;
@@ -324,9 +326,8 @@ protected:
     float* mSwigluBeta{};
     float* mSwigluLimit{};
 
-    using scale_type = std::conditional_t<W4A8_AWQ, WeightScale, DataType>;
-    scale_type* mExpertIntScale1{};
-    scale_type* mExpertIntScale2{};
+    ScaleType* mExpertIntScale1{};
+    ScaleType* mExpertIntScale2{};
 
     float mFP8WeightScalar1{1.f};
     float mFP8WeightScalar2{1.f};
@@ -665,7 +666,7 @@ protected:
     }
 
     void doIntQuant(cutlass_kernels::QuantType quant_type, std::vector<size_t> shape, WeightRawType* inputs,
-        scale_type* scales, uint8_t* outputs)
+        ScaleType* scales, uint8_t* outputs)
     {
         // Runs on the CPU, must be after stream sync
         if constexpr (INT_QUANT)
@@ -675,7 +676,7 @@ protected:
             size_t elems = std::reduce(shape.begin(), shape.end(), 1, std::multiplies{});
             std::vector<int8_t> h_out(elems);
             std::vector<WeightRawType> h_input(elems);
-            std::vector<scale_type> h_scales(shape[0] * shape[2]);
+            std::vector<ScaleType> h_scales(shape[0] * shape[2]);
 
             check_cuda_error(cudaMemcpy(h_input.data(), inputs, elems * sizeof(WeightRawType), cudaMemcpyDeviceToHost));
 
@@ -684,7 +685,7 @@ protected:
             check_cuda_error(cudaMemcpy(
                 outputs, h_out.data(), elems * sizeof(int8_t) / WEIGHT_ELEM_PER_BYTE, cudaMemcpyHostToDevice));
             check_cuda_error(
-                cudaMemcpy(scales, h_scales.data(), h_scales.size() * sizeof(scale_type), cudaMemcpyHostToDevice));
+                cudaMemcpy(scales, h_scales.data(), h_scales.size() * sizeof(ScaleType), cudaMemcpyHostToDevice));
         }
         else if constexpr (W4A8_AWQ)
         {
@@ -694,7 +695,7 @@ protected:
             size_t elems = std::reduce(shape.begin(), shape.end(), 1, std::multiplies{});
             std::vector<int8_t> h_out(elems * sizeof(int8_t) / WEIGHT_ELEM_PER_BYTE);
             std::vector<WeightRawType> h_input(elems);
-            std::vector<scale_type> h_scales(elems / mGroupSize);
+            std::vector<ScaleType> h_scales(elems / mGroupSize);
             check_cuda_error(cudaMemcpy(h_input.data(), inputs, elems * sizeof(WeightRawType), cudaMemcpyDeviceToHost));
 
             const size_t num_experts = shape[0];
@@ -708,7 +709,7 @@ protected:
             {
                 WeightRawType const* current_weight = h_input.data() + expert * input_mat_size;
                 int8_t* current_quantized_weight = h_out.data() + expert * quantized_mat_size;
-                scale_type* current_scales = h_scales.data() + expert * input_mat_size / mGroupSize;
+                ScaleType* current_scales = h_scales.data() + expert * input_mat_size / mGroupSize;
 
                 for (int ii = 0; ii < input_mat_size / mGroupSize; ++ii)
                 {
@@ -719,7 +720,7 @@ protected:
                         scale = std::max(scale, std::abs(float(current_weight_group[jj])));
                     }
                     scale *= quant_range_scale;
-                    current_scales[ii] = scale_type(scale);
+                    current_scales[ii] = ScaleType(scale);
                 }
 
                 for (int ii = 0; ii < input_mat_size / mGroupSize; ++ii)
@@ -749,7 +750,7 @@ protected:
                 // clipped to 7. Adjust the scale value to fix the error.
                 for (int ii = 0; ii < input_mat_size / mGroupSize; ++ii)
                 {
-                    current_scales[ii] = scale_type(float(current_scales[ii]) * 8 / 7);
+                    current_scales[ii] = ScaleType(float(current_scales[ii]) * 8 / 7);
                 }
 
                 int interleave = 1;
@@ -765,7 +766,7 @@ protected:
                 int const dim1 = shape[1] / mGroupSize / interleave; // K/mGroupSize/interleave
                 int const dim2 = interleave;
 
-                std::vector<scale_type> temp_scales(input_mat_size / mGroupSize);
+                std::vector<ScaleType> temp_scales(input_mat_size / mGroupSize);
                 for (int n = 0; n < dim0; ++n)
                 {
                     for (int k = 0; k < dim1; ++k)
@@ -786,7 +787,7 @@ protected:
             check_cuda_error(cudaMemcpy(
                 outputs, h_out.data(), elems * sizeof(int8_t) / WEIGHT_ELEM_PER_BYTE, cudaMemcpyHostToDevice));
             check_cuda_error(
-                cudaMemcpy(scales, h_scales.data(), h_scales.size() * sizeof(scale_type), cudaMemcpyHostToDevice));
+                cudaMemcpy(scales, h_scales.data(), h_scales.size() * sizeof(ScaleType), cudaMemcpyHostToDevice));
         }
     }
 
@@ -1355,14 +1356,14 @@ protected:
         }
         else if constexpr (W4A8_AWQ)
         {
-            auto input_scale1 = allocBuffer<scale_type>(mNumExperts * mHiddenSize * mGatedMultiplier);
-            auto input_scale2 = allocBuffer<scale_type>(mNumExperts * mInterSize);
-            std::vector<scale_type> h_input_scale1(mNumExperts * mHiddenSize * mGatedMultiplier, 1.0f);
-            std::vector<scale_type> h_input_scale2(mNumExperts * mInterSize, 1.0f);
+            auto input_scale1 = allocBuffer<ScaleType>(mNumExperts * mHiddenSize * mGatedMultiplier);
+            auto input_scale2 = allocBuffer<ScaleType>(mNumExperts * mInterSize);
+            std::vector<ScaleType> h_input_scale1(mNumExperts * mHiddenSize * mGatedMultiplier, 1.0f);
+            std::vector<ScaleType> h_input_scale2(mNumExperts * mInterSize, 1.0f);
             check_cuda_error(cudaMemcpy(input_scale1, h_input_scale1.data(),
-                mNumExperts * mHiddenSize * mGatedMultiplier * sizeof(scale_type), cudaMemcpyHostToDevice));
+                mNumExperts * mHiddenSize * mGatedMultiplier * sizeof(ScaleType), cudaMemcpyHostToDevice));
             check_cuda_error(cudaMemcpy(input_scale2, h_input_scale2.data(),
-                mNumExperts * mInterSize * sizeof(scale_type), cudaMemcpyHostToDevice));
+                mNumExperts * mInterSize * sizeof(ScaleType), cudaMemcpyHostToDevice));
 
             auto alpha1_ptrs = allocBuffer<float>(mNumExperts);
             auto alpha2_ptrs = allocBuffer<float>(mNumExperts);
@@ -1376,7 +1377,8 @@ protected:
 
             ASSERT_TRUE(scale1_ptr && scale2_ptr);
             quant_params = QuantParams::GroupWise(mGroupSize, scale1_ptr, scale2_ptr, input_scale1, input_scale2,
-                nullptr, nullptr, alpha1_ptrs, alpha2_ptrs);
+                nullptr, nullptr, alpha1_ptrs, alpha2_ptrs, /* fc1_use_per_expert_act_scale  */ true,
+                /* fc2_use_per_expert_act_scale  */ true);
         }
         else if (FP8)
         {
