@@ -2450,11 +2450,11 @@ void doActivation(T* output, GemmOutputType const* gemm_result, float const* fp8
             use_per_expert_act_scale, fc2_act_sf_flat, activation_type, prequant_scale, expanded_num_tokens);
     }; // end lambda launcher
 
-    if (num_elems_in_col * expanded_num_tokens < 256)
+    if (num_elems_in_col * expanded_num_tokens < 256 * 256)
     {
         launcher(std::integral_constant<int, 1>());
     }
-    else if (num_elems_in_col * expanded_num_tokens < 512)
+    else if (num_elems_in_col * expanded_num_tokens < 256 * 512)
     {
         launcher(std::integral_constant<int, 2>());
     }
