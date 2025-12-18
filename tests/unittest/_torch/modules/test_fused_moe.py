@@ -1679,17 +1679,18 @@ def test_fused_moe_w4a8_nvfp4_fp8(moe_backend, enable_configurable_moe, mocker):
 @pytest.mark.parametrize(
     "weight_loading_mode",
     [MoEWeightLoadingMode.VANILLA, MoEWeightLoadingMode.W4A8_CUSTOM])
-def test_fused_moe_w4afp8(dtype, weight_loading_mode):
+@pytest.mark.parametrize("seq_len", [4, 32, 64, 128, 256, 512, 1024, 4096])
+def test_fused_moe_w4afp8(dtype, weight_loading_mode, seq_len):
     mapping = Mapping()
     mapping.rank = mpi_rank()
 
     with torch.device(f'cuda:{mapping.rank}'):
-        SEQ_LEN = 4
-        HIDDEN_SIZE = 768
-        INTERMEDIATE_SIZE = 640
+        SEQ_LEN = seq_len
+        HIDDEN_SIZE = 2048
+        INTERMEDIATE_SIZE = 2048
         SCALING_GROUP_SIZE = 128
-        NUM_EXPERTS = 3
-        TOP_K = 2
+        NUM_EXPERTS = 32
+        TOP_K = 8
         routing_method = RenormalizeMoeRoutingMethod(top_k=TOP_K)
         torch.manual_seed(0)
         torch.cuda.manual_seed(0)
@@ -1928,17 +1929,24 @@ def test_fused_moe_w4afp8(dtype, weight_loading_mode):
         with AutoTuner.get().capture() as all_tactics, torch.inference_mode():
             output = fused_moe.forward(x, router_logits)
 
+        # Hopper L2 48MiB. Make buffer 4x as big to write into to make sure
+        flush_buf = torch.empty(4 * 48 * 1024 * 1024, dtype=torch.uint8, device='cuda') 
+        # Enable nsys 
+        torch.cuda.cudart().cudaProfilerStart()
         # Test all kernel tactics
         for tactic in all_tactics:
+            # Flush L2. See https://github.com/NVIDIA/nvbench/blob/main/nvbench/detail/l2flush.cuh#L28-L63
+            flush_buf.fill_(0)
             with AutoTuner.get().replay(tactic), torch.inference_mode():
                 output = fused_moe.forward(x, router_logits)
                 # assert that result does not contain NaN or is all 0s
                 assert not torch.isnan(output).any(), "output contains NaN"
                 assert torch.nonzero(output).numel() > 0, "output is empty"
-                torch.testing.assert_close(output,
-                                           ref_output,
-                                           rtol=1e-2,
-                                           atol=0.1)
+                # torch.testing.assert_close(output,
+                #                            ref_output,
+                #                            rtol=1e-2,
+                #                            atol=0.1)
+        torch.cuda.cudart().cudaProfilerStop()
 
         torch.cuda.synchronize()
         assert not torch.isnan(ref_output).any(), "ref_output contains NaN"

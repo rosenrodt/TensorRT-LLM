@@ -3859,7 +3859,8 @@ void CutlassMoeFCRunner<T, WeightType, OutputType, InputType, BackBoneType, Enab
         sync_check_cuda_error(stream);
 
         // Opportunistically apply FC2 prequant scaling in FC1 doActivation kernel if applicable
-        bool const fuse_fc2_prequant_scale = use_awq && is_gated_activation;
+        bool const disable_fc2_prequant_scale = tensorrt_llm::common::getBoolEnv("TRTLLM_DISABLE_FC2_PREQUANT_SCALE");
+        bool const fuse_fc2_prequant_scale = !disable_fc2_prequant_scale && use_awq && is_gated_activation;
         void const* fc2_prequant_scale_ptr = fuse_fc2_prequant_scale ? quant_params.groupwise.fc2.act_scales : nullptr;
         // Match the FC2 act buffer bound to respective TMA desc defined in setupTmaWarpSpecializedInputs()
         T* gemm1_output = fuse_fc2_prequant_scale ? reinterpret_cast<T*>(smoothed_act_) : fc1_result_;
