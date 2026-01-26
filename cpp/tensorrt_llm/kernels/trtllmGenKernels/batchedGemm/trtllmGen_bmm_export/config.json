@@ -76,7 +76,9 @@
         "BatchedGemmPerTensorScalingFp8LowLatency": {
             "_template": "BatchedGemmPerTensorScalingFp8Base",
             "mmaM": 128,
-            "clusterDimX": 1
+            "clusterDimX": 1,
+            "transposeMmaOutput": true,
+            "batch": "N"
         },
         "BatchedGemmPerTensorScalingFp8HighThroughput": {
             "_template": "BatchedGemmPerTensorScalingFp8Base",
@@ -212,6 +214,7 @@
             "fusedAct": false,
             "useUnrollLoop2xForMma": [true, false],
             "dtypeC": ["bf16", "fp16", "e2m1"],
+            "sfLayoutB": "8x4",
             "listN": "8,8",
             "numExperts": 2,
             "tileScheduler": "static"
@@ -348,9 +351,7 @@
             "tileScheduler": "persistent",
             "numStagesMma": 2,
             "mmaN,tileN,epilogueTileN,tileK,numStages,sfLayoutB,routeSfsAct": [
-                [64, 64, 32, 512, 4, "8x4", "tma"],
-                [64, 64, 64, 256, 6, "8x4", "ldgsts"],
-                [128, 128, 32, 256, 6, "128x4", "ldgsts"]
+                [128, 128, 64, 256, 6, "128x4", "ldgsts"]
             ]
         },
         {
@@ -454,7 +455,6 @@
             "tileScheduler": "persistent",
             "numStagesMma": 2,
             "mmaN,tileN,epilogueTileN,tileK,numStages,sfLayoutA,": [
-                [64, 64, 64, 512, 4, "8x4"],
                 [128, 128, 128, 256, 6, "128x4"]
             ]
         },
