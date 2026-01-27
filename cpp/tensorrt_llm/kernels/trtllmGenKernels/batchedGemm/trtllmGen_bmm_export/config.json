@@ -355,32 +355,6 @@
             ]
         },
         {
-            "_comment": "FP4_FC1_HighThroughputTile256_NonSwapAb",
-            "_template": "BatchedGemmFp4HighThroughputNonSwapAb",
-            "routeAct": "tma",
-            "fusedAct,act,eltwiseActType": [
-                [true, "swiglu", "none"],
-                [true, "geglu", "none"],
-                [false, "none", "relu2"]
-            ],
-            "sfLayoutA": "linear",
-            "useUnrollLoop2xForMma": false,
-            "tileScheduler": "persistent",
-            "routeSfsAct": "ldgPlusSts",
-            "fuseUtccpWithUtcmma": true,
-            "useMaxTmemOverlap": true,
-            "numEpilogueWarps": 8,
-            "numWarpsLoadA": 8,
-            "numWarpsLoadSfA": 4,
-            "numRegsPerThreadNonEpilogueWarp": 88,
-            "numRegsPerThreadEpilogueWarp": 144,
-            "numRegsPerThreadLoadA": 32,
-            "numRegsPerThreadLoadSfA": 40,
-            "mmaN,tileN,epilogueTileN,tileK,numStages,sfLayoutB": [
-                [256, 256, 64, 256, 4, "128x4"]
-            ]
-        },
-        {
             "_comment": "FP4_FC2_LowLatency",
             "_template": "BatchedGemmFp4LowLatency",
             "routeAct": false,
@@ -596,49 +570,6 @@
             ]
         },
         {
-            "_comment": "PerTensor_FP8_FC1_HighThroughput_NonSwapAb",
-            "_template": "BatchedGemmPerTensorScalingFp8HighThroughputNonSwapAb",
-            "routeAct": "tma",
-            "fusedAct,eltwiseActType": [
-                [true, "none"],
-                [false, "relu2"]
-            ],
-            "usePerTokenSfA": true,
-            "numRegsPerThreadNonEpilogueWarp": 56,
-            "numRegsPerThreadEpilogueWarp": 128,
-            "numWarpsLoadA": 8,
-            "useUnrollLoop2xForMma": [true, false],
-            "layoutB": "T",
-            "mmaN,tileN,epilogueTileN,tileK,numStages,numEpilogueWarps": [
-                [64, 64, 64, 256, 5, 4],
-                [128, 128, 64, 128, 8, 4],
-                [192, 192, 32, 128, 7, 4],
-                [256, 256, 64, 128, 6, 8]
-            ],
-            "numStagesMma": 2,
-            "tileScheduler": "persistent"
-        },
-        {
-            "_comment": "PerTensor_FP8_FC2_HighThroughput_NonSwapAb",
-            "_template": "BatchedGemmPerTensorScalingFp8HighThroughputNonSwapAb",
-            "numRegsPerThreadNonEpilogueWarp": 48,
-            "numRegsPerThreadEpilogueWarp": 128,
-            "layoutB": "T",
-            "routeAct": false,
-            "fusedAct": false,
-            "useUnrollLoop2xForMma": [true, false],
-            "dtypeC": "bf16",
-            "mmaN,tileN,epilogueTileN,tileK,numStages,numEpilogueWarps": [
-                [64, 64, 64, 128, 8, 4],
-                [128, 128, 32, 128, 7, 4],
-                [192, 192, 32, 128, 7, 4],
-                [256, 256, 32, 128, 6, 8]
-            ],
-            "tileScheduler,numStagesMma": [
-                ["persistent", 2]
-            ]
-        },
-        {
             "_comment": "MxFp4xFp8_FC1_LowLatency",
             "_template": "BatchedGemmMxE2m1E4m3LowLatency",
             "routeAct": "ldgsts",
@@ -780,67 +711,6 @@
             "useUnrollLoop2xForMma": false,
             "dtypeC": "bf16",
             "mmaN,tileN,epilogueTileN,tileK,numStages,sfLayoutB,numRegsPerThreadEpilogueWarp,numRegsPerThreadNonEpilogueWarp": [
-                [256, 256, 64, 128, 5, "128x4", 144, 96]
-            ],
-            "tileScheduler": "persistent"
-        },
-        {
-            "_comment": "MxFp4xMxFp8_FC1_HighThroughput_NonSwapAb",
-            "_template": "BatchedGemmMxE2m1MxE4m3HighThroughputNonSwapAb",
-            "routeAct": "tma",
-            "routeSfsAct": "ldgsts",
-            "fusedAct": true,
-            "sfLayoutA": "linear",
-            "useUnrollLoop2xForMma": [true, false],
-            "mmaN,tileN,epilogueTileN,tileK,numStages,sfLayoutB,numRegsPerThreadEpilogueWarp,numRegsPerThreadNonEpilogueWarp,numStagesMma,numWarpsLoadA,numWarpsLoadSfA,numRegsPerThreadLoadA,numRegsPerThreadLoadSfA": [
-                [64, 64, 64, 256, 4, "8x4", 168, 48, 2, 1, 1, 48, 48],
-                [64, 64, 64, 128, 7, "8x4", 168, 48, 2, 1, 1, 48, 48],
-                [128, 128, 32, 256, 4, "128x4", 152, 48, 2, 8, 4, 48, 48],
-                [128, 128, 32, 128, 7, "128x4", 152, 48, 2, 8, 4, 48, 48]
-            ],
-            "tileScheduler": "persistent"
-        },
-        {
-            "_comment": "MxFp4xMxFp8_FC1_HighThroughput_tileN_256_NonSwapAb",
-            "_template": "BatchedGemmMxE2m1MxE4m3HighThroughputNonSwapAb",
-            "routeAct": "tma",
-            "routeSfsAct": "ldgsts",
-            "fusedAct": true,
-            "sfLayoutA": "linear",
-            "fuseUtccpWithUtcmma": true,
-            "useMaxTmemOverlap": true,
-            "useUnrollLoop2xForMma": false,
-            "mmaN,tileN,epilogueTileN,tileK,numStages,sfLayoutB,numRegsPerThreadEpilogueWarp,numRegsPerThreadNonEpilogueWarp,numWarpsLoadA,numWarpsLoadSfA,numRegsPerThreadLoadA,numRegsPerThreadLoadSfA": [
-                [256, 256, 64, 128, 6, "128x4", 144, 88, 8, 4, 56, 56],
-                [256, 256, 64, 256, 3, "128x4", 144, 88, 8, 4, 56, 56]
-            ],
-            "tileScheduler": "persistent"
-        },
-        {
-            "_comment": "MxFp4xMxFp8_FC2_HighThroughput_NonSwapAb",
-            "_template": "BatchedGemmMxE2m1MxE4m3HighThroughputNonSwapAb",
-            "routeAct": false,
-            "fusedAct": false,
-            "useUnrollLoop2xForMma": [true, false],
-            "dtypeC": "bf16",
-            "mmaN,tileN,epilogueTileN,tileK,numStages,sfLayoutA,numRegsPerThreadEpilogueWarp,numRegsPerThreadNonEpilogueWarp,numStagesMma": [
-                [64, 64, 64, 256, 4, "8x4", 168, 96, 2],
-                [64, 64, 64, 128, 7, "8x4", 168, 96, 2],
-                [128, 128, 64, 256, 4, "128x4", 168, 96, 2],
-                [128, 128, 64, 128, 7, "128x4", 168, 96, 2]
-            ],
-            "tileScheduler": "persistent"
-        },
-        {
-            "_comment": "MxFp4xMxFp8_FC2_HighThroughput_tileN_256_NonSwapAb",
-            "_template": "BatchedGemmMxE2m1MxE4m3HighThroughputNonSwapAb",
-            "routeAct": false,
-            "fusedAct": false,
-            "fuseUtccpWithUtcmma": true,
-            "useMaxTmemOverlap": true,
-            "useUnrollLoop2xForMma": false,
-            "dtypeC": "bf16",
-            "mmaN,tileN,epilogueTileN,tileK,numStages,sfLayoutA,numRegsPerThreadEpilogueWarp,numRegsPerThreadNonEpilogueWarp": [
                 [256, 256, 64, 128, 5, "128x4", 144, 96]
             ],
             "tileScheduler": "persistent"
