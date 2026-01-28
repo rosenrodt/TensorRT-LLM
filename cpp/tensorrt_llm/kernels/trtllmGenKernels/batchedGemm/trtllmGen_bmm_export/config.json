@@ -42,6 +42,7 @@
             "sfLayoutC": "8x4",
             "transposeMmaOutput": true,
             "batch": "N",
+            "ctaSwizzleType": "rasterAlongM",
             "biasType": "m"
         },
         "BatchedGemmFp4HighThroughput": {
@@ -52,6 +53,7 @@
             "sfLayoutC": "128x4",
             "transposeMmaOutput": true,
             "batch": "N",
+            "ctaSwizzleType": "rasterAlongM",
             "biasType": "m"
         },
         "BatchedGemmFp4HighThroughputNonSwapAb": {
@@ -62,6 +64,7 @@
             "sfLayoutC": "128x4",
             "transposeMmaOutput": false,
             "batch": "M",
+            "ctaSwizzleType": "rasterAlongN",
             "biasType": "n",
             "epilogueLdtmDps": 32,
             "epilogueLdtmBits": 32
@@ -78,14 +81,16 @@
             "mmaM": 128,
             "clusterDimX": 1,
             "transposeMmaOutput": true,
-            "batch": "N"
+            "batch": "N",
+            "ctaSwizzleType": "rasterAlongM"
         },
         "BatchedGemmPerTensorScalingFp8HighThroughput": {
             "_template": "BatchedGemmPerTensorScalingFp8Base",
             "mmaM": 256,
             "clusterDimX": 2,
             "transposeMmaOutput": true,
-            "batch": "N"
+            "batch": "N",
+            "ctaSwizzleType": "rasterAlongM"
         },
         "BatchedGemmPerTensorScalingFp8HighThroughputNonSwapAb": {
             "_template": "BatchedGemmPerTensorScalingFp8Base",
@@ -93,6 +98,7 @@
             "clusterDimX": 2,
             "transposeMmaOutput": false,
             "batch": "M",
+            "ctaSwizzleType": "rasterAlongN",
             "epilogueLdtmDps": 32,
             "epilogueLdtmBits": 32
         },
@@ -111,7 +117,8 @@
             "useDeepSeekFp8": true,
             "numStagesMmaWithinWorkTile": 2,
             "hoistMmaTaskTryWaits": true,
-            "batch": "N"
+            "batch": "N",
+            "ctaSwizzleType": "rasterAlongM"
         },
 
         "BatchedGemmMxE2m1E4m3LowLatency": {
@@ -127,7 +134,8 @@
             "biasType": "m",
             "act": "swiglu",
             "transposeMmaOutput": true,
-            "batch": "N"
+            "batch": "N",
+            "ctaSwizzleType": "rasterAlongM"
         },
 
         "BatchedGemmMxE2m1MxE4m3Base": {
@@ -145,7 +153,8 @@
             "dtypeB": "mxe4m3",
             "biasType": "m",
             "transposeMmaOutput": true,
-            "batch": "N"
+            "batch": "N",
+            "ctaSwizzleType": "rasterAlongM"
         },
         "BatchedGemmMxE2m1MxE4m3HighThroughput": {
             "_template": "BatchedGemmMxE2m1MxE4m3Base",
@@ -157,7 +166,8 @@
             "dtypeB": "mxe4m3",
             "biasType": "m",
             "transposeMmaOutput": true,
-            "batch": "N"
+            "batch": "N",
+            "ctaSwizzleType": "rasterAlongM"
         },
         "BatchedGemmMxE2m1MxE4m3HighThroughputNonSwapAb": {
             "_template": "BatchedGemmMxE2m1MxE4m3Base",
@@ -170,6 +180,7 @@
             "biasType": "n",
             "transposeMmaOutput": false,
             "batch": "M",
+            "ctaSwizzleType": "rasterAlongN",
             "epilogueLdtmDps": 32,
             "epilogueLdtmBits": 32
         },
@@ -190,7 +201,8 @@
             "act": "swiglu",
             "patchF2fp": false,
             "transposeMmaOutput": true,
-            "batch": "N"
+            "batch": "N",
+            "ctaSwizzleType": "rasterAlongM"
         },
         "BatchedGemmE2m1E4m3LowLatency": {
             "_template": "BatchedGemmFp4Base",
@@ -200,6 +212,7 @@
             "sfLayoutC": "8x4",
             "transposeMmaOutput": true,
             "batch": "N",
+            "ctaSwizzleType": "rasterAlongM",
             "biasType": "m",
             "dtypeB": "e4m3",
             "dtypeMmaA": "e4m3",
